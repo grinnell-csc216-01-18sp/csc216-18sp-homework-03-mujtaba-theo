@@ -34,9 +34,19 @@ from sendrecvbase import BaseSender, BaseReceiver
 import Queue
 
 class Segment:
-    def __init__(self, msg, dst):
+    def __init__(self, msg, dst, bit=False):
         self.msg = msg
         self.dst = dst
+        self.bit = bit
+
+    def is_corrupt(self):
+        return self.msg == '<CORRUPTED>'
+
+def ack(bit=False):
+    return Segment('<ACK>', 'sender', bit)
+
+def nak(bit=False):
+    return Segment('<NAK>', 'sender', bit)
 
 class NaiveSender(BaseSender):
     def __init__(self, app_interval):
@@ -60,12 +70,45 @@ class NaiveReceiver(BaseReceiver):
         self.send_to_app(seg.msg)
 
 class AltSender(BaseSender):
-    # TODO: fill me in!
-    pass
+    def __init__(self, app_interval):
+        super(AltSender, self).__init__(app_interval)
+        self.bit = False
+        self.wait = False
+
+    def receive_from_app(self, msg):
+        if self.wait == True:
+            return
+        self.curr_msg = msg
+        seg = Segment(msg, 'receiver', self.bit)
+        self.send_to_network(seg)
+        self.wait = True
+
+    def receive_from_network(self, seg):
+        if self.wait == False or seg.is_corrupt() or seg.msg != '<ACK>':
+            seg = Segment(self.curr_msg, 'receiver', self.bit)
+            self.send_to_network(seg)
+        else:
+            self.wait = False
+            self.bit = not self.bit
+
+    def on_interrupt(self):
+        pass
+
 
 class AltReceiver(BaseReceiver):
-    # TODO: fill me in!
-    pass
+    def __init__(self, bit=False):
+        super(AltReceiver, self).__init__()
+        self.bit = bit
+
+    def receive_from_client(self, seg):
+        if seg.is_corrupt():
+            self.send_to_network(nak())
+        elif seg.bit != self.bit:
+            self.send_to_network(ack())
+        else:
+            self.send_to_app(seg.msg)
+            self.send_to_network(ack())
+            self.bit = not self.bit
 
 class GBNSender(BaseSender):
     # TODO: fill me in!
