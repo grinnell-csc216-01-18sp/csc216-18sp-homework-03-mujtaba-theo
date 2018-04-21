@@ -33,9 +33,9 @@ class BaseSender(object):
         if self.custom_enabled:
             self.custom_timer += 1
             if self.custom_timer >= self.custom_interval:
+                self.custom_enabled = False
                 self.on_interrupt()
                 self.custom_timer = 0
-                self.custom_enabled = False
 
     def start_timer(self, interval):
         self.custom_enabled  = True
