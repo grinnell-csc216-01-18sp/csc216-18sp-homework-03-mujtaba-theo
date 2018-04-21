@@ -42,12 +42,6 @@ class Segment:
     def is_corrupt(self):
         return self.msg == '<CORRUPTED>'
 
-def ack(bit=False):
-    return Segment('<ACK>', 'sender', bit)
-
-def nak(bit=False):
-    return Segment('<NAK>', 'sender', bit)
-
 class NaiveSender(BaseSender):
     def __init__(self, app_interval):
         super(NaiveSender, self).__init__(app_interval)
@@ -76,24 +70,45 @@ class AltSender(BaseSender):
         self.wait = False
 
     def receive_from_app(self, msg):
+        # print('received message {} from app'.format(msg))
         if self.wait == True:
+            # print('but waiting, so dropping it')
             return
         self.curr_msg = msg
         seg = Segment(msg, 'receiver', self.bit)
+        # print('sending to network')
         self.send_to_network(seg)
         self.wait = True
 
+        self.timer_bit = self.bit
+        self.start_timer(5)
+
+    def is_valid_ack(self, seg):
+        return seg.msg == '<ACK>' and seg.bit == self.bit
+
     def receive_from_network(self, seg):
-        if self.wait == False or seg.is_corrupt() or seg.msg != '<ACK>':
-            seg = Segment(self.curr_msg, 'receiver', self.bit)
-            self.send_to_network(seg)
-        else:
+        # print('received {} from network'.format(seg.msg))
+        if self.wait == True and (not seg.is_corrupt()) and self.is_valid_ack(seg):
+            # print('getting out of wait, changing bits')
             self.wait = False
             self.bit = not self.bit
+        else:
+            # print('but its corrupt or not ACK or different bit, so resending')
+            # print('sender bit: {}, ACK bit: {}, are we in wait? {}'.format(self.bit, seg.bit, self.wait))
+            seg = Segment(self.curr_msg, 'receiver', self.bit)
+            self.send_to_network(seg)
+
+            self.timer_bit = self.bit
+            self.start_timer(5)
 
     def on_interrupt(self):
-        pass
-
+        if self.timer_bit == self.bit:
+            self.start_timer(5)
+            # print('Times up and bit hasnt changed, resending')
+            seg = Segment(self.curr_msg, 'receiver', self.bit)
+            self.send_to_network(seg)
+            return
+        # print('Times up and bit has changed, moving on')
 
 class AltReceiver(BaseReceiver):
     def __init__(self, bit=False):
@@ -101,13 +116,17 @@ class AltReceiver(BaseReceiver):
         self.bit = bit
 
     def receive_from_client(self, seg):
+        # print('received message {} from client'.format(seg.msg))
         if seg.is_corrupt():
-            self.send_to_network(nak())
+            # print('but is corrupt, so sending NAK')
+            self.send_to_network(Segment('<NAK>', 'sender', self.bit))
         elif seg.bit != self.bit:
-            self.send_to_network(ack())
+            # print('but is wrong bit, so resending ACK')
+            self.send_to_network(Segment('<ACK>', 'sender', not self.bit))
         else:
+            # print('and its ok, so sending to app, sending ACK and switching bit')
             self.send_to_app(seg.msg)
-            self.send_to_network(ack())
+            self.send_to_network(Segment('<ACK>', 'sender', self.bit))
             self.bit = not self.bit
 
 class GBNSender(BaseSender):
