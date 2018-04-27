@@ -74,15 +74,14 @@ class AltSender(BaseSender):
         return seg.msg == '<ACK>' and seg.bit == self.bit
 
     def receive_from_app(self, msg):
-        # print('received message {} from app'.format(msg))
         if self.wait == True:
-            # print('but waiting, so dropping it')
             return
         self.curr_msg = msg
         seg = Segment(msg, 'receiver', bit=self.bit)
         # print('sending to network')
         self.send_to_network(seg)
         self.wait = True
+        self.disallow_app_msgs()
 
         self.timer_bit = self.bit
         self.start_timer(5)
@@ -92,7 +91,9 @@ class AltSender(BaseSender):
         if self.wait == True and (not seg.is_corrupt()) and self.is_valid_ack(seg):
             # print('getting out of wait, changing bits')
             self.wait = False
+            self.allow_app_msgs()
             self.bit = not self.bit
+            self.end_timer()
         else:
             # print('but its corrupt or not ACK or different bit, so resending')
             # print('sender bit: {}, ACK bit: {}, are we in wait? {}'.format(self.bit, seg.bit, self.wait))
@@ -103,13 +104,9 @@ class AltSender(BaseSender):
             self.start_timer(5)
 
     def on_interrupt(self):
-        if self.timer_bit == self.bit:
-            self.start_timer(5)
-            # print('Times up and bit hasnt changed, resending')
-            seg = Segment(self.curr_msg, 'receiver', bit=self.bit)
-            self.send_to_network(seg)
-            return
-        # print('Times up and bit has changed, moving on')
+        self.start_timer(5)
+        seg = Segment(self.curr_msg, 'receiver', bit=self.bit)
+        self.send_to_network(seg)
 
 class AltReceiver(BaseReceiver):
     def __init__(self, bit=False):
@@ -136,20 +133,18 @@ class GBNSender(BaseSender):
         self.base = base
         self.nextseq = nextseq
         self.messages = {}
-        self.timer = False
-        self.start_timer(5)
         self.N = N
 
     def receive_from_app(self, msg):
         print('got message {} from app'.format(msg))
         if self.nextseq >= self.base + self.N:
-            print('too many packages ({} >= {} + {}), returning'.format(self.nextseq, self.base, self.N))
+            print('too many packets ({} >= {} + {}), returning'.format(self.nextseq, self.base, self.N))
             return
         self.messages[self.nextseq] = msg
         seg = Segment(msg, 'receiver', seqnum=self.nextseq)
         self.send_to_network(seg)
         if self.base == self.nextseq:
-            self.timer = True
+            self.start_timer(5)
         self.nextseq = self.nextseq + 1
 
     def receive_from_network(self, seg):
@@ -159,19 +154,13 @@ class GBNSender(BaseSender):
             return
         self.base = seg.seqnum + 1
         if self.base == self.nextseq:
-            self.timer = False
+            self.end_timer()
         else:
-            self.timer = True
+            self.start_timer(5)
 
     def on_interrupt(self):
-        print('timer running now....')
         self.start_timer(5)
-        if self.timer == False:
-            print('lol no, timer is set to false')
-            return
-        print('resending packets')
         for i in range(self.base, self.nextseq):
-            print('resending packet {}'.format(i))
             msg = self.messages[i]
             seg = Segment(msg, 'receiver', seqnum=i)
             self.send_to_network(seg)
