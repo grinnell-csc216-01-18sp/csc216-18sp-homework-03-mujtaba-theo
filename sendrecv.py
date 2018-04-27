@@ -136,9 +136,9 @@ class GBNSender(BaseSender):
         self.N = N
 
     def receive_from_app(self, msg):
-        print('got message {} from app'.format(msg))
+        # print('got message {} from app'.format(msg))
         if self.nextseq >= self.base + self.N:
-            print('too many packets ({} >= {} + {}), returning'.format(self.nextseq, self.base, self.N))
+            # print('too many packets ({} >= {} + {}), returning'.format(self.nextseq, self.base, self.N))
             return
         self.messages[self.nextseq] = msg
         seg = Segment(msg, 'receiver', seqnum=self.nextseq)
@@ -148,9 +148,9 @@ class GBNSender(BaseSender):
         self.nextseq = self.nextseq + 1
 
     def receive_from_network(self, seg):
-        print('______RECEIVED FROM NETWORK, ({}, {})'.format(seg.msg, seg.seqnum))
+        # print('______RECEIVED FROM NETWORK, ({}, {})'.format(seg.msg, seg.seqnum))
         if seg.is_corrupt() or seg.msg != '<ACK>':
-            print('but its corrupt or not ack')
+            # print('but its corrupt or not ack')
             return
         self.base = seg.seqnum + 1
         if self.base == self.nextseq:
@@ -174,15 +174,15 @@ class GBNReceiver(BaseReceiver):
         self.last_ack_num = 0
 
     def receive_from_client(self, seg):
-        print('received ({}, {}) from client'.format(seg.msg, seg.seqnum))
+        # print('received ({}, {}) from client'.format(seg.msg, seg.seqnum))
         if (not seg.is_corrupt()) and self.expected == seg.seqnum:
-            print('and its fine, so sending to app, updating last ACK')
+            # print('and its fine, so sending to app, updating last ACK')
             self.send_to_app(seg.msg)
             last_ack = Segment('<ACK>', 'sender', seqnum=self.expected)
             self.send_to_network(last_ack)
             self.expected = self.expected + 1
             self.last_ack_num = self.last_ack_num + 1
         else:
-            print('its bad ({} vs {}), resending last ack'.format(self.expected, seg.seqnum))
+            # print('its bad ({} vs {}), resending last ack'.format(self.expected, seg.seqnum))
             last_ack = Segment('<ACK>', 'sender', seqnum=self.last_ack_num)
             self.send_to_network(last_ack)
