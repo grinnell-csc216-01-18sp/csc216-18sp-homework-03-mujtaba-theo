@@ -31,6 +31,6 @@ optional arguments:
 
 ## Repository Information
 
-* Theo Kalfas \[kalfasth\], Mujtaba Aslam \[aslammuj\]
+* *(Your names and Grinnell IDs)*
 * *(The version of Python that you used)*
 * *(List of external resources that you consulted)*
