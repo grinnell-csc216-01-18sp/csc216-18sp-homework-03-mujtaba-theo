@@ -32,5 +32,5 @@ optional arguments:
 ## Repository Information
 
 * Theo Kalfas \[kalfasth\], Mujtaba Aslam \[aslammuj\]
-* *(The version of Python that you used)*
-* *(List of external resources that you consulted)*
+* Python 2.7
+* Nothing yet
