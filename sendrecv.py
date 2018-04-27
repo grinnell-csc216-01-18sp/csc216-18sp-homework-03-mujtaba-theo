@@ -34,11 +34,12 @@ from sendrecvbase import BaseSender, BaseReceiver
 import Queue
 
 class Segment:
-    def __init__(self, msg, dst, bit=False, seqnum=0):
+    def __init__(self, msg, dst, bit=False, seqnum=0, syn=''):
         self.msg = msg
         self.dst = dst
         self.bit = bit
         self.seqnum = seqnum
+        self.syn = syn
 
     def is_corrupt(self):
         return self.msg == '<CORRUPTED>'
@@ -69,16 +70,26 @@ class AltSender(BaseSender):
         super(AltSender, self).__init__(app_interval)
         self.bit = False
         self.wait = False
+        self.requesting = False
 
     def is_valid_ack(self, seg):
         return seg.msg == '<ACK>' and seg.bit == self.bit
+
+    def request_connection(self):
+        seg = Segment('', 'receiver', syn='SYN')
+        self.send_to_network(seg)
+        self.start_timer(5)
+        self.requesting = True
+
+    def request_close(self):
+        seg = Segment('', 'receiver', syn='FIN')
+        self.send_to_network(seg)
 
     def receive_from_app(self, msg):
         if self.wait == True:
             return
         self.curr_msg = msg
         seg = Segment(msg, 'receiver', bit=self.bit)
-        # print('sending to network')
         self.send_to_network(seg)
         self.wait = True
         self.disallow_app_msgs()
@@ -87,16 +98,28 @@ class AltSender(BaseSender):
         self.start_timer(5)
 
     def receive_from_network(self, seg):
-        # print('received {} from network'.format(seg.msg))
+        if seg.syn == 'SYNACK':
+            seg = Segment('', 'receiver', syn='SYNFINAL')
+            self.send_to_network(seg)
+            self.requesting = False
+            self.end_timer()
+            return
+        elif seg.syn == 'FINACK':
+            print('sender received FINACK, doing nothing?')
+            # Do nothing?
+            return
+        elif seg.syn == 'FIN':
+            print('sender received FIN, closing connection')
+            seg = Segment('', 'receiver', syn='FINACK')
+            self.send_to_network(seg)
+            return
+
         if self.wait == True and (not seg.is_corrupt()) and self.is_valid_ack(seg):
-            # print('getting out of wait, changing bits')
             self.wait = False
             self.allow_app_msgs()
             self.bit = not self.bit
             self.end_timer()
         else:
-            # print('but its corrupt or not ACK or different bit, so resending')
-            # print('sender bit: {}, ACK bit: {}, are we in wait? {}'.format(self.bit, seg.bit, self.wait))
             seg = Segment(self.curr_msg, 'receiver', bit=self.bit)
             self.send_to_network(seg)
 
@@ -104,6 +127,9 @@ class AltSender(BaseSender):
             self.start_timer(5)
 
     def on_interrupt(self):
+        if self.requesting:
+            self.request_connection()
+            return
         self.start_timer(5)
         seg = Segment(self.curr_msg, 'receiver', bit=self.bit)
         self.send_to_network(seg)
@@ -112,17 +138,34 @@ class AltReceiver(BaseReceiver):
     def __init__(self, bit=False):
         super(AltReceiver, self).__init__()
         self.bit = bit
+        self.requesting = False
+
+    def request_close(self):
+        seg = Segment('', 'sender', syn='FIN')
+        self.send_to_network(seg)
 
     def receive_from_client(self, seg):
-        # print('received message {} from client'.format(seg.msg))
+        if seg.syn == 'FINACK':
+            print('receiver received FINACK, doing nothing?')
+            # Do nothing?
+            return
+        elif seg.syn == 'FIN':
+            print('receiver received FIN, closing connection')
+            seg = Segment('', 'sender', syn='FINACK')
+            self.send_to_network(seg)
+            return
+        elif seg.syn == 'SYN':
+            seg = Segment('', 'sender', syn='SYNACK')
+            self.send_to_network(seg)
+            return
+        elif seg.syn == 'SYNFINAL':
+            return
+
         if seg.is_corrupt():
-            # print('but is corrupt, so sending NAK')
             self.send_to_network(Segment('<NAK>', 'sender', bit=self.bit))
         elif seg.bit != self.bit:
-            # print('but is wrong bit, so resending ACK')
             self.send_to_network(Segment('<ACK>', 'sender', bit=not self.bit))
         else:
-            # print('and its ok, so sending to app, sending ACK and switching bit')
             self.send_to_app(seg.msg)
             self.send_to_network(Segment('<ACK>', 'sender', bit=self.bit))
             self.bit = not self.bit
@@ -135,10 +178,18 @@ class GBNSender(BaseSender):
         self.messages = {}
         self.N = N
 
+    def request_connection(self):
+        seg = Segment('', 'receiver', syn='SYN')
+        self.send_to_network(seg)
+        self.start_timer(5)
+        self.requesting = True
+
+    def request_close(self):
+        seg = Segment('', 'receiver', syn='FIN')
+        self.send_to_network(seg)
+
     def receive_from_app(self, msg):
-        print('got message {} from app'.format(msg))
         if self.nextseq >= self.base + self.N:
-            print('too many packets ({} >= {} + {}), returning'.format(self.nextseq, self.base, self.N))
             return
         self.messages[self.nextseq] = msg
         seg = Segment(msg, 'receiver', seqnum=self.nextseq)
@@ -148,9 +199,23 @@ class GBNSender(BaseSender):
         self.nextseq = self.nextseq + 1
 
     def receive_from_network(self, seg):
-        print('______RECEIVED FROM NETWORK, ({}, {})'.format(seg.msg, seg.seqnum))
+        if seg.syn == 'SYNACK':
+            seg = Segment('', 'receiver', syn='SYNFINAL')
+            self.send_to_network(seg)
+            self.requesting = False
+            self.end_timer()
+            return
+        elif seg.syn == 'FINACK':
+            print('sender received FINACK, doing nothing?')
+            # Do nothing?
+            return
+        elif seg.syn == 'FIN':
+            print('sender received FIN, closing connection')
+            seg = Segment('', 'receiver', syn='FINACK')
+            self.send_to_network(seg)
+            return
+
         if seg.is_corrupt() or seg.msg != '<ACK>':
-            print('but its corrupt or not ack')
             return
         self.base = seg.seqnum + 1
         if self.base == self.nextseq:
@@ -173,16 +238,33 @@ class GBNReceiver(BaseReceiver):
         self.expected = expected
         self.last_ack_num = 0
 
+    def request_close(self):
+        seg = Segment('', 'sender', syn='FIN')
+        self.send_to_network(seg)
+
     def receive_from_client(self, seg):
-        print('received ({}, {}) from client'.format(seg.msg, seg.seqnum))
+        if seg.syn == 'FINACK':
+            # Do nothing?
+            print('receiver received FINACK, doing nothing?')
+            return
+        elif seg.syn == 'FIN':
+            print('receiver received FIN, closing connection')
+            seg = Segment('', 'sender', syn='FINACK')
+            self.send_to_network(seg)
+            return
+        elif seg.syn == 'SYN':
+            seg = Segment('', 'sender', syn='SYNACK')
+            self.send_to_network(seg)
+            return
+        elif seg.syn == 'SYNFINAL':
+            return
+
         if (not seg.is_corrupt()) and self.expected == seg.seqnum:
-            print('and its fine, so sending to app, updating last ACK')
             self.send_to_app(seg.msg)
             last_ack = Segment('<ACK>', 'sender', seqnum=self.expected)
             self.send_to_network(last_ack)
             self.expected = self.expected + 1
             self.last_ack_num = self.last_ack_num + 1
         else:
-            print('its bad ({} vs {}), resending last ack'.format(self.expected, seg.seqnum))
             last_ack = Segment('<ACK>', 'sender', seqnum=self.last_ack_num)
             self.send_to_network(last_ack)

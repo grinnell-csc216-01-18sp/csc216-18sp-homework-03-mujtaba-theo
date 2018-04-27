@@ -42,7 +42,7 @@ def peek(q):
     return q.queue[0]
 
 class Simulation:
-    def __init__(self, sender, receiver, net_delay, corr_prob, drop_prob, debug):
+    def __init__(self, sender, receiver, net_delay, corr_prob, drop_prob, debug, connected = 0):
         self.sender = sender
         self.receiver = receiver
         self.net_delay = net_delay
@@ -50,17 +50,34 @@ class Simulation:
         self.drop_prob = drop_prob
         self.debug = debug
         self.network_queue = Queue.PriorityQueue()
+        self.stopped = False
+
+        # Bit tracking connection status between sendr and recvr.
+        self.connected = connected
 
     def print_debug(self, msg):
         if self.debug:
             print(msg)
 
     def push_to_network(self, step, seg):
-        if random.random() >= self.drop_prob:
+        if random.random() >= self.drop_prob or seg.syn != '':
             self.network_queue.put( (step + self.net_delay, seg) )
 
     def run(self, n):
+        if self.connected == 0:
+            self.sender.request_connection()
+
         for step in range(1, n+1):
+            if random.random() < 0.0005 and not self.stopped:
+                print('')
+                print('The Goddess of Luck has decided that this connection is\n too promiscuous to exist further into this unending\n tumultuous endless loop of nothingness.\n Therefore\'st\'ve\'de\'y\'all, she will be terminating\n this unholy connection at once, by coercing one of the\n two parties to send the aformentioned FIN packet to the\n other unsuspecting party and end this once and for all')
+                print('')
+                self.stopped = True
+                if random.random() < 0.50:
+                    self.sender.request_close()
+                else:
+                    self.receiver.request_close()
+
             self.print_debug('Step {}:'.format(step))
             # 1. Step the sender and receiver
             self.sender.step()
@@ -71,7 +88,21 @@ class Simulation:
                 (timeout, _) = peek(self.network_queue)
                 if step >= timeout:
                     (_, seg) = self.network_queue.get()
-                    if random.random() < self.corr_prob:
+                    if seg.syn == 'SYN' and self.connected == 0:
+                        self.connected += 1
+                    elif seg.syn == 'SYNACK' and self.connected == 1:
+                        self.connected += 1
+                    elif seg.syn == 'SYNFINAL' and self.connected == 2:
+                        self.connected += 1
+                    elif seg.syn == 'FIN':
+                        self.connected = 0
+                    elif seg.syn == 'FINACK':
+                        self.connected = 0
+                    elif self.connected != 3:
+                        self.connected = 0
+                        continue # quit and drop packet if not connected
+
+                    if random.random() < self.corr_prob and seg.syn == '':
                         seg.msg = '<CORRUPTED>'
                     if seg.dst == "sender":
                         self.sender.input_queue.put(seg)
