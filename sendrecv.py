@@ -71,6 +71,7 @@ class AltSender(BaseSender):
         self.bit = False
         self.wait = False
         self.requesting = False
+        self.disallow_app_msgs()
 
     def is_valid_ack(self, seg):
         return seg.msg == '<ACK>' and seg.bit == self.bit
@@ -86,12 +87,9 @@ class AltSender(BaseSender):
         self.send_to_network(seg)
 
     def receive_from_app(self, msg):
-        if self.wait == True:
-            return
         self.curr_msg = msg
         seg = Segment(msg, 'receiver', bit=self.bit)
         self.send_to_network(seg)
-        self.wait = True
         self.disallow_app_msgs()
 
         self.timer_bit = self.bit
@@ -102,6 +100,7 @@ class AltSender(BaseSender):
             seg = Segment('', 'receiver', syn='SYNFINAL')
             self.send_to_network(seg)
             self.requesting = False
+            self.allow_app_msgs()
             self.end_timer()
             return
         elif seg.syn == 'FINACK':
@@ -114,8 +113,7 @@ class AltSender(BaseSender):
             self.send_to_network(seg)
             return
 
-        if self.wait == True and (not seg.is_corrupt()) and self.is_valid_ack(seg):
-            self.wait = False
+        if (not seg.is_corrupt()) and self.is_valid_ack(seg):
             self.allow_app_msgs()
             self.bit = not self.bit
             self.end_timer()
@@ -177,6 +175,7 @@ class GBNSender(BaseSender):
         self.nextseq = nextseq
         self.messages = {}
         self.N = N
+        self.disallow_app_msgs()
 
     def request_connection(self):
         seg = Segment('', 'receiver', syn='SYN')
@@ -190,6 +189,7 @@ class GBNSender(BaseSender):
 
     def receive_from_app(self, msg):
         if self.nextseq >= self.base + self.N:
+            self.disallow_app_msgs()
             return
         self.messages[self.nextseq] = msg
         seg = Segment(msg, 'receiver', seqnum=self.nextseq)
@@ -204,6 +204,7 @@ class GBNSender(BaseSender):
             self.send_to_network(seg)
             self.requesting = False
             self.end_timer()
+            self.allow_app_msgs()
             return
         elif seg.syn == 'FINACK':
             print('sender received FINACK, doing nothing?')
@@ -220,8 +221,10 @@ class GBNSender(BaseSender):
         self.base = seg.seqnum + 1
         if self.base == self.nextseq:
             self.end_timer()
+            self.allow_app_msgs()
         else:
             self.start_timer(5)
+
 
     def on_interrupt(self):
         self.start_timer(5)
